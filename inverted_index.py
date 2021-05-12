@@ -3,18 +3,21 @@
 
 import json
 from bs4 import BeautifulSoup
+import nltk
+import gensim
 import os
 from pathlib import Path
 import glob
 from collections import defaultdict
-import tokenizer as tknz
 import warnings
 warnings.filterwarnings(action='ignore')
 
+
 def getUserInput():
-    d = input("Enter the diretory:")
+    d = input("Enter the directory:")
     p = Path(d)
     return p
+
 
 def loopAllFiles(directory):
     """loop through all csv files in a single director which user enters."""
@@ -22,6 +25,7 @@ def loopAllFiles(directory):
     os.chdir(directory)
     result = glob.glob('*.{}'.format(extension))
     return result
+
 
 def walks_dirs(file_path):
     #return the list contains directory
@@ -36,91 +40,86 @@ def walks_dirs(file_path):
         all_lst += file_list
     return all_lst
 
+
 def get_content(soup_page):  # Pass in a soup object --> this function will extract the text content in the json and put then into a giant string
-    dict_score = defaultdict(int)
-    dict_freq = defaultdict(int)
+    lst_word = []
+    lst = []
     for data in soup_page.find_all(["b",'strong']):
         text_page_bold = data.get_text()
-        lst_word = tknz.tokenize(text_page_bold)
-        for i in lst_word:
-            if len(i) > 1:
-                dict_score[i.lower()] += 5
-                dict_freq[i.lower()] += 1
+        lst_word += nltk.word_tokenize(text_page_bold.lower()) * 2
+
     for data in soup_page.find_all("h1"):
         text_page_h1 = data.get_text()
-        lst_word = tknz.tokenize(text_page_h1)
-        for i in lst_word:
-            if len(i) > 1:
-                dict_score[i.lower()] += 5
-                dict_freq[i.lower()] += 1
+        lst_word += nltk.word_tokenize(text_page_h1.lower()) * 8
+
     for data in soup_page.find_all("h2"):
         text_page_h2 = data.get_text()
-        lst_word = tknz.tokenize(text_page_h2)
-        for i in lst_word:
-            if len(i) > 1:
-                dict_score[i.lower()] += 5
-                dict_freq[i.lower()] += 1
+        lst_word += nltk.word_tokenize(text_page_h2.lower()) * 6
+
     for data in soup_page.find_all("h3"):
         text_page_h3 = data.get_text()
-        lst_word = tknz.tokenize(text_page_h3)
-        for i in lst_word:
-            if len(i) > 1:
-                dict_score[i.lower()] += 5
-                dict_freq[i.lower()] += 1
+        lst_word += nltk.word_tokenize(text_page_h3.lower()) * 4
+
     for data in soup_page.find_all("title"):
         text_page_title = data.get_text()
-        lst_word = tknz.tokenize(text_page_title)
-        for i in lst_word:
-            if len(i) > 1:
-                dict_score[i.lower()] += 5
-                dict_freq[i.lower()] += 1
+        lst_word += nltk.word_tokenize(text_page_title.lower()) * 10
+
     for data in soup_page.find_all("p"):
         text_page = data.get_text()
-        lst_word = tknz.tokenize(text_page)
-        for i in lst_word:
-            if len(i) > 1:
-                dict_score[i.lower()] += 1
-                dict_freq[i.lower()] += 1
-    return dict_score, dict_freq # dict_score: key= Word, val= score, .....
+        lst_word += nltk.word_tokenize(text_page.lower())
+    lst.append(lst_word) #[[""]]
+    dictionary = gensim.corpora.Dictionary(lst) # { "" :0}
+    corpus = [dictionary.doc2bow(l) for l in lst] # unicode
+    tf_idf = gensim.models.TfidfModel(corpus, smartirs='ntc')
+    for doc in tf_idf[corpus]:
+        return [[dictionary[id], round(freq, 2)] for id, freq in doc]
 
-def indexing(dict_ind, url, score, freq):
+
+def indexing(dict_ind, dict_url, url_num, url, tfidf_lst):
     #modify the dict
-    for key in freq.keys():
-        dict_ind[key].append((url, score[key], freq[key]))
-    
+    dict_url[url_num] = url
+    for tple in tfidf_lst:
+        dict_ind[tple[0]].append((url_num, tple[1]))
+
+
 def sortResult(dict1):
     for i in dict1.values():
-        i.sort(key=lambda x:x[2], reverse=True)
-        
-def dict_to_file(index_dict):
+        i.sort(key=lambda x:x[1], reverse=True)
+
+
+def dict_to_file(dic, filename):
     '''
     with open('indexer.json', 'r') as r:
         read = json.load(r)
         print(type(read))
     '''
 
-    with open('indexer.json', 'w') as j:
-        json.dump(index_dict, j)
+    with open(f'{filename}.json', 'w') as j:
+        json.dump(dic, j)
+
 
 def run():
     # get all the files in the directory
     lst_files = walks_dirs(getUserInput())
     # loop through each file and get the content in it
     indexes = defaultdict(list)
+    url_dict = dict()
     numDoc = 0
     for dir in lst_files:
         with open(dir, 'r') as js:
             html_content = json.load(js)
-            url = html_content['url']
+            urls = html_content['url']
             numDoc += 1
             soup = BeautifulSoup(html_content['content'], 'html.parser')
-            dict_score, dict_freq = get_content(soup)
-            indexing(indexes, url, dict_score, dict_freq)
+            tfidf_lst = get_content(soup)
+            indexing(indexes, url_dict, numDoc, urls, tfidf_lst) # {word: [(url_id, score)]}
     sortResult(indexes)
-    dict_to_file(indexes)
-    with open("report.txt", "w") as report:
+    dict_to_file(indexes, "indexer")
+    dict_to_file(url_dict, "urlTokens")
+    """with open("report.txt", "w") as report:
         report.write("The number of indexed documents: "+str(numDoc)+"\n")
-        report.write("The number of unique words: "+str(len(indexes))+"\n")
+        report.write("The number of unique words: "+str(len(indexes))+"\n")"""
+
 
 if __name__ == '__main__':
     run()
